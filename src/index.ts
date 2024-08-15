@@ -54,7 +54,7 @@ export function apply(ctx: Context, config: Config) {
             });
           }
 
-          const finalResponse = `@${session.username} 🧐 您提问的问题: ${question}\n\n💬 回答:\n${answer}${referenceText}`;
+          const finalResponse = `@${session.username} \n\n🧐 您提问的问题: ${question}\n\n💬 回答:\n${answer}${referenceText}`;
           logger.info(`📤 回复: ${finalResponse}`);
           return finalResponse;
         } else {
@@ -64,11 +64,9 @@ export function apply(ctx: Context, config: Config) {
           return '❌ 无法获取有效回答';
         }
       } catch (error) {
-        if (config.debugMode) {
-          logger.error(`🚨 请求失败: ${error.message}`);
-          if (error.response) {
-            logger.error(`🚨 详细错误信息: ${JSON.stringify(error.response.data)}`);
-          }
+        logger.error(`🚨 请求失败: ${error.message}`);
+        if (config.debugMode && error.response) {
+          logger.error(`🚨 详细错误信息: ${JSON.stringify(error.response.data)}`);
         }
         return '❌ 发生错误，无法获取回答';
       }
