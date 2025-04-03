@@ -79,113 +79,17 @@ export function apply(ctx: Context, config: Config) {
     logger.error(`创建数据目录失败: ${err.message}`, err);
   });
 
-  // 使用canvas渲染回答图片
-  const renderAnswerImage = async (
-    question: string,
-    answer: string,
-    references: any[] = []
-  ): Promise<string> => {
-    if (!ctx.canvas) {
-      throw new Error('canvas插件不可用');
-    }
-
-    try {
-      const canvas = ctx.canvas;
-      const width = config.imageWidth;
-      const padding = 20;
-      
-      // 计算文本换行和高度
-      const context = canvas.createCanvas(width, 100).getContext('2d');
-      context.font = '14px LXGW WenKai Lite';
-      
-      // 计算问题文本高度
-      const questionLines = wrapText(context, question, width - (padding * 2));
-      const questionHeight = questionLines.length * 20;
-      
-      // 计算回答文本高度
-      const answerLines = wrapText(context, answer, width - (padding * 2));
-      const answerHeight = answerLines.length * 20;
-      
-      // 计算参考资料高度
-      let referencesHeight = 0;
-      if (references.length > 0) {
-        referencesHeight = 40; // 标题高度
-        references.forEach(ref => {
-          const refLines = wrapText(context, `${ref.title} - ${ref.url}`, width - (padding * 2));
-          referencesHeight += refLines.length * 20;
-        });
-      }
-      
-      // 计算总高度
-      const totalHeight = padding * 2 + questionHeight + 40 + answerHeight + referencesHeight;
-      
-      // 创建最终画布
-      const canv = canvas.createCanvas(width, totalHeight);
-      const ctx2d = canv.getContext('2d');
-      
-      // 设置背景
-      ctx2d.fillStyle = config.imageBackground;
-      ctx2d.fillRect(0, 0, width, totalHeight);
-      
-      // 绘制问题
-      ctx2d.fillStyle = '#333333';
-      ctx2d.font = 'bold 16px LXGW WenKai Lite';
-      ctx2d.textAlign = 'left';
-      ctx2d.textBaseline = 'top';
-      ctx2d.fillText('问题:', padding, padding);
-      
-      ctx2d.font = '14px LXGW WenKai Lite';
-      let y = padding + 30;
-      questionLines.forEach(line => {
-        ctx2d.fillText(line, padding, y);
-        y += 20;
-      });
-      
-      // 绘制回答
-      y += 20;
-      ctx2d.font = 'bold 16px LXGW WenKai Lite';
-      ctx2d.fillText('回答:', padding, y);
-      
-      y += 30;
-      ctx2d.font = '14px LXGW WenKai Lite';
-      answerLines.forEach(line => {
-        ctx2d.fillText(line, padding, y);
-        y += 20;
-      });
-      
-      // 绘制参考资料
-      if (references.length > 0) {
-        y += 20;
-        ctx2d.font = 'bold 16px LXGW WenKai Lite';
-        ctx2d.fillText('参考资料:', padding, y);
-        
-        y += 30;
-        ctx2d.font = '14px LXGW WenKai Lite';
-        references.forEach((ref, index) => {
-          const refText = `${index + 1}. ${ref.title} - ${ref.url}`;
-          const refLines = wrapText(ctx2d, refText, width - (padding * 2));
-          refLines.forEach(line => {
-            ctx2d.fillText(line, padding, y);
-            y += 20;
-          });
-        });
-      }
-      
-      // 保存图片到内存并返回base64数据
-      const buffer = canv.toBuffer('image/png');
-      const base64Image = `data:image/png;base64,${buffer.toString('base64')}`;
-      
-      logger.debug(`图片渲染完成: 大小=${buffer.length}字节`);
-      return base64Image;
-    } catch (error) {
-      logger.error(`图片渲染失败`, error);
-      throw new Error(`图片渲染失败: ${error instanceof Error ? error.message : '未知错误'}`);
-    }
-  };
-  
   // 文本换行辅助函数
   const wrapText = (context: any, text: string, maxWidth: number): string[] => {
-    const words = text.split('');
+    // 处理 Markdown 格式
+    const processedText = text
+      .replace(/\*\*(.*?)\*\*/g, '$1') // 移除加粗
+      .replace(/\*(.*?)\*/g, '$1')     // 移除斜体
+      .replace(/`(.*?)`/g, '$1')       // 移除代码块
+      .replace(/\[(.*?)\]\((.*?)\)/g, '$1') // 移除链接
+      .replace(/\n/g, ' ');            // 将换行转换为空格
+    
+    const words = processedText.split('');
     const lines: string[] = [];
     let currentLine = '';
     
@@ -206,22 +110,225 @@ export function apply(ctx: Context, config: Config) {
     return lines;
   };
 
+  // 渲染 Markdown 文本
+  const renderMarkdownText = (ctx2d: any, text: string, x: number, y: number, maxWidth: number, lineHeight: number, fontSize: number) => {
+    let currentY = y;
+    const parts = text.split(/(\*\*.*?\*\*|\*.*?\*|`.*?`|\[.*?\]\(.*?\))/g);
+    
+    parts.forEach(part => {
+      if (!part) return;
+      
+      let fontStyle = 'normal';
+      let fontWeight = 'normal';
+      
+      if (part.startsWith('**') && part.endsWith('**')) {
+        // 加粗文本
+        fontWeight = 'bold';
+        part = part.slice(2, -2);
+      } else if (part.startsWith('*') && part.endsWith('*')) {
+        // 斜体文本
+        fontStyle = 'italic';
+        part = part.slice(1, -1);
+      } else if (part.startsWith('`') && part.endsWith('`')) {
+        // 代码块
+        ctx2d.fillStyle = '#f0f0f0';
+        part = part.slice(1, -1);
+      } else if (part.startsWith('[') && part.includes('](')) {
+        // 链接
+        const [text, url] = part.match(/\[(.*?)\]\((.*?)\)/).slice(1);
+        part = text;
+        ctx2d.fillStyle = '#3498db';
+      }
+      
+      ctx2d.font = `${fontWeight} ${fontStyle} ${fontSize}px LXGW WenKai Lite`;
+      const lines = wrapText(ctx2d, part, maxWidth);
+      
+      lines.forEach(line => {
+        ctx2d.fillText(line, x, currentY);
+        currentY += lineHeight;
+      });
+      
+      // 重置样式
+      ctx2d.fillStyle = '#2c3e50';
+      ctx2d.font = `${fontSize}px LXGW WenKai Lite`;
+    });
+    
+    return currentY;
+  };
+
+  // 使用canvas渲染回答图片
+  const renderAnswerImage = async (
+    question: string,
+    answer: string,
+    references: any[] = []
+  ): Promise<string> => {
+    if (!ctx.canvas) {
+      throw new Error('canvas插件不可用');
+    }
+
+    try {
+      const canvas = ctx.canvas;
+      const width = config.imageWidth;
+      const padding = 30;
+      const lineHeight = 24;
+      const titleFontSize = 18;
+      const contentFontSize = 16;
+      
+      // 计算文本换行和高度
+      const context = canvas.createCanvas(width, 100).getContext('2d');
+      context.font = `${contentFontSize}px LXGW WenKai Lite`;
+      
+      // 计算问题文本高度
+      const questionLines = wrapText(context, question, width - (padding * 2));
+      const questionHeight = questionLines.length * lineHeight;
+      
+      // 计算回答文本高度（使用临时画布测量）
+      const tempCanvas = canvas.createCanvas(width, 1000);
+      const tempCtx = tempCanvas.getContext('2d');
+      tempCtx.font = `${contentFontSize}px LXGW WenKai Lite`;
+      let answerHeight = 0;
+      const parts = answer.split(/(\*\*.*?\*\*|\*.*?\*|`.*?`|\[.*?\]\(.*?\))/g);
+      parts.forEach(part => {
+        if (!part) return;
+        const lines = wrapText(tempCtx, part, width - (padding * 2));
+        answerHeight += lines.length * lineHeight;
+      });
+      
+      // 计算参考资料高度
+      let referencesHeight = 0;
+      if (references.length > 0) {
+        referencesHeight = lineHeight * 2; // 标题高度
+        references.forEach(ref => {
+          // 计算标题高度
+          const titleText = `${ref.title}`;
+          const titleLines = wrapText(context, titleText, width - (padding * 2));
+          referencesHeight += titleLines.length * lineHeight;
+          
+          // 计算地址高度
+          const urlLines = wrapText(context, ref.url, width - (padding * 2));
+          referencesHeight += urlLines.length * lineHeight;
+          
+          // 添加间距
+          referencesHeight += lineHeight / 2;
+        });
+      }
+      
+      // 计算总高度（添加额外的padding以确保内容完整显示）
+      const totalHeight = padding * 2 + questionHeight + lineHeight * 2 + answerHeight + referencesHeight + padding;
+      
+      // 创建最终画布
+      const canv = canvas.createCanvas(width, totalHeight);
+      const ctx2d = canv.getContext('2d');
+      
+      // 设置背景
+      ctx2d.fillStyle = config.imageBackground;
+      ctx2d.fillRect(0, 0, width, totalHeight);
+      
+      // 绘制问题
+      ctx2d.fillStyle = '#2c3e50';
+      ctx2d.font = `bold ${titleFontSize}px LXGW WenKai Lite`;
+      ctx2d.textAlign = 'left';
+      ctx2d.textBaseline = 'top';
+      ctx2d.fillText('问题', padding, padding);
+      
+      // 绘制问题下划线
+      ctx2d.strokeStyle = '#3498db';
+      ctx2d.lineWidth = 2;
+      ctx2d.beginPath();
+      ctx2d.moveTo(padding, padding + titleFontSize + 5);
+      ctx2d.lineTo(padding + 50, padding + titleFontSize + 5);
+      ctx2d.stroke();
+      
+      ctx2d.font = `${contentFontSize}px LXGW WenKai Lite`;
+      let y = padding + titleFontSize + 15;
+      questionLines.forEach(line => {
+        ctx2d.fillText(line, padding, y);
+        y += lineHeight;
+      });
+      
+      // 绘制回答
+      y += lineHeight;
+      ctx2d.font = `bold ${titleFontSize}px LXGW WenKai Lite`;
+      ctx2d.fillText('回答', padding, y);
+      
+      // 绘制回答下划线
+      ctx2d.beginPath();
+      ctx2d.moveTo(padding, y + titleFontSize + 5);
+      ctx2d.lineTo(padding + 50, y + titleFontSize + 5);
+      ctx2d.stroke();
+      
+      y += titleFontSize + 15;
+      y = renderMarkdownText(ctx2d, answer, padding, y, width - (padding * 2), lineHeight, contentFontSize);
+      
+      // 绘制参考资料
+      if (references.length > 0) {
+        y += lineHeight;
+        ctx2d.font = `bold ${titleFontSize}px LXGW WenKai Lite`;
+        ctx2d.fillText('参考资料', padding, y);
+        
+        // 绘制参考资料下划线
+        ctx2d.beginPath();
+        ctx2d.moveTo(padding, y + titleFontSize + 5);
+        ctx2d.lineTo(padding + 80, y + titleFontSize + 5);
+        ctx2d.stroke();
+        
+        y += titleFontSize + 15;
+        ctx2d.font = `${contentFontSize}px LXGW WenKai Lite`;
+        references.forEach((ref, index) => {
+          // 绘制标题
+          const titleText = `${index + 1}. ${ref.title}`;
+          const titleLines = wrapText(ctx2d, titleText, width - (padding * 2));
+          titleLines.forEach(line => {
+            ctx2d.fillText(line, padding, y);
+            y += lineHeight;
+          });
+          
+          // 绘制地址（使用蓝色）
+          ctx2d.fillStyle = '#3498db';
+          const urlLines = wrapText(ctx2d, ref.url, width - (padding * 2));
+          urlLines.forEach(line => {
+            ctx2d.fillText(line, padding, y);
+            y += lineHeight;
+          });
+          
+          // 重置颜色并添加间距
+          ctx2d.fillStyle = '#2c3e50';
+          y += lineHeight / 2;
+        });
+      }
+      
+      // 保存图片到内存并返回base64数据
+      const buffer = canv.toBuffer('image/png');
+      const base64Image = `data:image/png;base64,${buffer.toString('base64')}`;
+      
+      logger.debug(`图片渲染完成: 大小=${buffer.length}字节`);
+      return base64Image;
+    } catch (error) {
+      logger.error(`图片渲染失败`, error);
+      throw new Error(`图片渲染失败: ${error instanceof Error ? error.message : '未知错误'}`);
+    }
+  };
+  
+  // 定义主命令
   ctx.command('kagi.ask <question:text>', '🤖 向 FastGPT 提问')
-    .option('image', '-i', { fallback: false })
-    .action(async ({ session, options }, question) => {
+    .action(async ({ session }, question) => {
       logger.info(`📥 收到提问: ${question}`);
       
       // 检查canvas的可用性
-      const useImage = options.image && hasCanvas;
+      const useImage = /\s-i\s*$/.test(question);
+      const cleanQuestion = question.replace(/\s-i\s*$/, '').trim();
       
-      if (!hasCanvas && options.image) {
+      logger.info(`📥 清理后的问题: ${cleanQuestion}`);
+      logger.info(`📥 是否启用图片模式: ${useImage}`);
+      
+      if (!hasCanvas && useImage) {
         logger.warn('用户请求图片模式，但canvas不可用');
         await session.send('图片渲染服务不可用，将以文本模式显示结果');
       }
       
       try {
         const response = await axios.post(apiUrl, {
-          query: question,
+          query: cleanQuestion,
           cache: true,
           web_search: true,
         }, {
@@ -247,7 +354,7 @@ export function apply(ctx: Context, config: Config) {
               const loadingMsg = await session.send('正在生成回答并渲染图片...请稍等~');
               
               // 渲染图片
-              const imageData = await renderAnswerImage(question, answer, references);
+              const imageData = await renderAnswerImage(cleanQuestion, answer, references);
               
               // 发送图片并撤回加载消息
               await session.send(h.image(imageData));
@@ -307,7 +414,7 @@ export function apply(ctx: Context, config: Config) {
                 });
               }
               
-              const finalResponse = `@${session.username} \n\n🧐 您提问的问题: ${question}\n\n💬 回答:\n${answer}${referenceText}`;
+              const finalResponse = `@${session.username} \n\n🧐 您提问的问题: ${cleanQuestion}\n\n💬 回答:\n${answer}${referenceText}`;
               logger.info(`📤 回复: ${finalResponse}`);
               return finalResponse;
             }
@@ -321,7 +428,7 @@ export function apply(ctx: Context, config: Config) {
               });
             }
             
-            const finalResponse = `@${session.username} \n\n🧐 您提问的问题: ${question}\n\n💬 回答:\n${answer}${referenceText}`;
+            const finalResponse = `@${session.username} \n\n🧐 您提问的问题: ${cleanQuestion}\n\n💬 回答:\n${answer}${referenceText}`;
             logger.info(`📤 回复: ${finalResponse}`);
             return finalResponse;
           }
